@@ -235,6 +235,29 @@
 </div>
 
 <script>
+/* ---------------- install prompt capture ---------------- */
+/* Must be attached immediately: Chrome can fire this before the rest of the app renders. */
+let deferredInstallPrompt=null;
+let installOutcome=null;
+window.addEventListener('beforeinstallprompt',(e)=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  try{render();}catch(err){}
+});
+window.addEventListener('appinstalled',()=>{
+  deferredInstallPrompt=null;
+  try{render();}catch(err){}
+});
+async function triggerInstall(){
+  if(!deferredInstallPrompt){toast('Install isn\u2019t available yet in this browser \u2014 use the menu instructions below instead.');return;}
+  deferredInstallPrompt.prompt();
+  const choice=await deferredInstallPrompt.userChoice;
+  installOutcome=choice.outcome;
+  deferredInstallPrompt=null;
+  if(installOutcome==='accepted'){toast('Installing MastMate\u2026');}
+  try{render();}catch(err){}
+}
+
 /* ---------------- state ---------------- */
 const LS='mastmate-v1';
 const SYMPTOMS=[
@@ -601,6 +624,16 @@ function flareCheck(){
 }
 function installCard(){
   if(isStandalone()) return '';
+  const CANONICAL_URL = 'https://moniuet.github.io/MCAS/';
+  const onCanonical = (location.href.indexOf('moniuet.github.io/MCAS')!==-1);
+  if(deferredInstallPrompt){
+    return `<div class="card" style="border:1.5px dashed var(--line)">
+      <h2>Add MastMate to your home screen</h2>
+      <div class="csub">Private and offline, no account, no app store</div>
+      <div style="font-size:14px;line-height:1.6;margin-bottom:10px">Your browser supports one-tap install. Tap the button below and confirm, MastMate will then open full screen like an app.</div>
+      <button class="btn btn-primary btn-sm" onclick="triggerInstall()">Install MastMate</button>
+    </div>`;
+  }
   const ua = navigator.userAgent||'';
   const iOS = /iphone|ipad|ipod/i.test(ua);
   const isFirefox = /firefox|fxios/i.test(ua);
@@ -619,8 +652,8 @@ function installCard(){
   } else {
     how = 'In your browser menu, choose <b>Add to Home screen</b> (or <b>Install</b>). MastMate then opens full screen like an app.';
   }
-  const fileWarning = isFile
-    ? `<div class="disc" style="margin-top:8px;color:var(--clay,#7A5518)"><b>Heads up:</b> you are opening MastMate as a downloaded file (the address bar shows <code>file://…</code>). Browsers will not offer a proper "Install" for pages opened this way, and any home-screen shortcut you do get may stop working once the file moves or is deleted. For a reliable install, MastMate needs to be opened from a real <code>https://</code> web address instead, ask whoever gave you the file for a link, or host the file yourself (e.g. a free static host).</div>`
+  const fileWarning = isFile || !onCanonical
+    ? `<div class="disc" style="margin-top:8px;color:var(--clay,#7A5518)"><b>Can't install?</b> This page needs to be opened from its real web address for install to work. Please visit <a href="${CANONICAL_URL}" style="color:var(--clay,#7A5518);text-decoration:underline">${CANONICAL_URL}</a> directly in Chrome or Safari, rather than a downloaded file or a copied version, and try again from there.</div>`
     : '';
   return `<div class="card" style="border:1.5px dashed var(--line)">
     <h2>Add MastMate to your home screen</h2>
