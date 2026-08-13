@@ -838,13 +838,14 @@ function inCycleWindow(dstr){
   const ps=state.periods||[]; if(!ps.length) return false;
   return ps.some(p=>{const o=daysBetween(p,dstr); return o>=-2&&o<=3;});
 }
-function togglePeriodToday(){
+function togglePeriodOn(d){
   state.periods=state.periods||[];
-  const t=today(); const i=state.periods.indexOf(t);
+  const i=state.periods.indexOf(d);
   if(i>=0){state.periods.splice(i,1);toast('Removed');}
-  else{state.periods.push(t);state.periods.sort();toast('Period start logged');}
+  else{state.periods.push(d);state.periods.sort();toast('Period start logged');}
   save(); renderDaily();
 }
+function togglePeriodToday(){togglePeriodOn(today());}
 const BUCKET_FW={leftovers:3,aged:3,ferment:3,alcohol:3,fish:3,takeaway:2,vinegar:2,tomato:2,citrus:2,choc:2,nuts:1,fresh:-1};
 const BUCKET_TW={heat:2,stress:2,sleep:2,smells:2,illness:2,newmed:2,misseddose:2,cycle:2,exercise:1,pollen:1,weather:1,travel:1};
 function bucketScore(){
@@ -1303,12 +1304,20 @@ function insightsCard(){
 
 /* ---------------- DAILY CHECK-IN ---------------- */
 let draft={sev:{},energy:2,mood:2,weight:'',triggers:[],foods:[],relief:[],dur:''};
+let editingDate=null; // null = editing today; otherwise an ISO date string of a past check-in being edited
+function dailyDate(){return editingDate||today();}
+function editCheckin(d){editingDate=(d===today())?null:d; go('daily');}
+function cancelEditCheckin(){editingDate=null; renderDaily();}
 function renderDaily(){
-  const existing=state.checkins.find(c=>c.date===today());
+  const dd=dailyDate();
+  const existing=state.checkins.find(c=>c.date===dd);
   if(existing)draft=JSON.parse(JSON.stringify({sev:existing.sev||{},energy:existing.energy??2,mood:existing.mood??2,weight:existing.weight||'',triggers:existing.triggers||[],foods:existing.foods||[],relief:existing.relief||[],dur:existing.dur||''}));
+  else if(editingDate)draft={sev:{},energy:2,mood:2,weight:'',triggers:[],foods:[],relief:[],dur:''};
+  const isPast=editingDate&&editingDate!==today();
   document.getElementById('s-daily').innerHTML=`
-    <div class="eyebrow">Daily check-in</div>
-    <h1 class="title">How are you today?</h1>
+    <div class="eyebrow">${isPast?'Editing a past check-in':'Daily check-in'}</div>
+    <h1 class="title">${isPast?('How was '+fmt(dd)+'?'):'How are you today?'}</h1>
+    ${isPast?`<div class="csub" style="margin:-6px 0 14px"><span class="pill" onclick="cancelEditCheckin()">\u2190 Back to today</span></div>`:''}
     <p class="lede">Rate each system, 0 = none, 4 = severe. Clear days are gold: they are the baseline every pattern gets measured against.</p>
     <div class="card">
       ${SYMPTOMS.map(s=>{const v=draft.sev[s.k]??0;return `
@@ -1329,13 +1338,13 @@ function renderDaily(){
     </div>
 
     <div class="card">
-      <label class="fl">Weight today (optional, ${state.settings.unit})</label>
+      <label class="fl">Weight${isPast?' that day':' today'} (optional, ${state.settings.unit})</label>
       <input type="number" inputmode="decimal" value="${draft.weight}" placeholder="e.g. 68" oninput="draft.weight=this.value"/>
     </div>
 
     <div class="card">
-      <h2>What did you eat today?</h2>
-      <div class="csub">Tap anything that featured today. This powers the 48-hour food correlator, so tag even the days you feel fine.</div>
+      <h2>What did you eat${isPast?' that day':' today'}?</h2>
+      <div class="csub">Tap anything that featured${isPast?' that day':' today'}. This powers the 48-hour food correlator, so tag even the days you feel fine.</div>
       <div class="pill-row">${FOODTAGS.map(j=>`<span class="pill ${(draft.foods||[]).includes(j.k)?"on":""}" onclick="toggleFoodTag(&quot;${j.k}&quot;)">${j.e} ${j.label}</span>`).join("")}${(state.customfoods||[]).map(cf=>{const k="cf:"+cf;return `<span class="pill ${(draft.foods||[]).includes(k)?"on":""}" onclick="toggleFoodTag(&quot;${k.replace(/"/g,"&quot;")}&quot;)">🍴 ${cf}</span>`;}).join("")}</div>${(state.customfoods||[])===0?"":""}<div class="csub" style="margin-top:8px">Your own foods appear here too. Add more on the Diet tab.</div>
     </div>
 
@@ -1343,7 +1352,7 @@ function renderDaily(){
       <h2>What might have affected today?</h2>
       <div class="csub">Optional. Tap anything that applied; over time MastMate links these to your tougher days.</div>
       <div class="pill-row">${TRIGGERS.map(t=>`<span class="pill ${(draft.triggers||[]).includes(t.k)?'on':''}" onclick="toggleTrigger('${t.k}')">${t.e} ${t.label}</span>`).join('')}</div>
-      ${state.settings.cycleOn?`<div class="check ${(state.periods||[]).includes(today())?'on':''}" style="margin-top:12px" onclick="togglePeriodToday()"><div class="box">${(state.periods||[]).includes(today())?'✓':''}</div><div><div class="ct">My period started today</div><div class="cs">Feeds the hormonal-window pattern in the correlator</div></div></div>`:''}
+      ${state.settings.cycleOn?`<div class="check ${(state.periods||[]).includes(dd)?'on':''}" style="margin-top:12px" onclick="togglePeriodOn('${dd}')"><div class="box">${(state.periods||[]).includes(dd)?'✓':''}</div><div><div class="ct">${isPast?'My period started that day':'My period started today'}</div><div class="cs">Feeds the hormonal-window pattern in the correlator</div></div></div>`:''}
     </div>
 
     ${draftIsReaction()?`<div class="card" style="border:1.5px solid var(--clay-soft)">
@@ -1354,23 +1363,26 @@ function renderDaily(){
       <div class="pill-row">${['<1h','A few hours','Most of the day','1-2 days','Longer'].map(d=>`<span class="pill ${draft.dur===d?'on':''}" onclick="draft.dur=(draft.dur==='${d}'?'':'${d}');renderDaily()">${d}</span>`).join('')}</div>
     </div>`:''}
 
-    <button class="btn btn-primary btn-block" onclick="saveCheckin()">${existing?'Update today\'s check-in':'Save check-in'}</button>
+    <button class="btn btn-primary btn-block" onclick="saveCheckin()">${existing?(isPast?'Update this check-in':'Update today\'s check-in'):(isPast?'Save check-in for '+fmt(dd):'Save check-in')}</button>
     <div style="height:14px"></div>
-    ${state.checkins.length?`<div class="card"><h2>Recent check-ins</h2>${state.checkins.slice(-6).reverse().map(c=>`<div class="item"><div><b>${fmt(c.date)}</b><div class="muted">burden ${burden(c)}/100${isFlare(c)?' · 🔴 reaction day':''}${(c.relief&&c.relief.length)?(' · helped: '+c.relief.map(k=>(RELIEFS.find(r=>r.k===k)||{}).label||k).join(', ')):''}${c.dur?(' · '+c.dur):''}${(c.foods&&c.foods.length)?(' · '+c.foods.map(k=>(FOODTAGS.find(j=>j.k===k)||{}).label||k).join(', ')):''}</div></div><span class="x" onclick="delCheckin('${c.date}')">delete</span></div>`).join('')}</div>`:''}
+    ${state.checkins.length?`<div class="card"><h2>Recent check-ins</h2><div class="csub" style="margin:0 0 6px">Tap a day to edit it</div>${state.checkins.slice(-6).reverse().map(c=>`<div class="item" style="cursor:pointer" onclick="editCheckin('${c.date}')"><div><b>${fmt(c.date)}${c.date===dd?' (editing)':''}</b><div class="muted">burden ${burden(c)}/100${isFlare(c)?' · 🔴 reaction day':''}${(c.relief&&c.relief.length)?(' · helped: '+c.relief.map(k=>(RELIEFS.find(r=>r.k===k)||{}).label||k).join(', ')):''}${c.dur?(' · '+c.dur):''}${(c.foods&&c.foods.length)?(' · '+c.foods.map(k=>(FOODTAGS.find(j=>j.k===k)||{}).label||k).join(', ')):''}</div></div><span class="x" onclick="event.stopPropagation();delCheckin('${c.date}')">delete</span></div>`).join('')}</div>`:''}
   `;
 }
 function draftIsReaction(){return Object.values(draft.sev||{}).some(v=>v>=2);}
 function toggleRelief(k){draft.relief=draft.relief||[];const i=draft.relief.indexOf(k);if(i>=0)draft.relief.splice(i,1);else draft.relief.push(k);renderDaily();}
 function setSev(k,i){draft.sev[k]=i;renderDaily();}
 function saveCheckin(){
+  const dd=dailyDate();
   const isRx=Object.values(draft.sev||{}).some(v=>v>=2);
-  const rec={date:today(),sev:{...draft.sev},energy:draft.energy,mood:draft.mood,weight:draft.weight,triggers:[...(draft.triggers||[])],foods:[...(draft.foods||[])],relief:isRx?[...(draft.relief||[])]:[],dur:isRx?(draft.dur||''):''};
-  const idx=state.checkins.findIndex(c=>c.date===today());
+  const rec={date:dd,sev:{...draft.sev},energy:draft.energy,mood:draft.mood,weight:draft.weight,triggers:[...(draft.triggers||[])],foods:[...(draft.foods||[])],relief:isRx?[...(draft.relief||[])]:[],dur:isRx?(draft.dur||''):''};
+  const idx=state.checkins.findIndex(c=>c.date===dd);
   if(idx>=0)state.checkins[idx]=rec; else state.checkins.push(rec);
   state.checkins.sort((a,b)=>a.date<b.date?-1:1);
-  save();toast('Check-in saved');go('home');
+  const wasPast=editingDate&&editingDate!==today();
+  editingDate=null;
+  save();toast(wasPast?'Check-in updated':'Check-in saved');go('home');
 }
-function delCheckin(d){state.checkins=state.checkins.filter(c=>c.date!==d);save();renderDaily();}
+function delCheckin(d){state.checkins=state.checkins.filter(c=>c.date!==d);if(editingDate===d)editingDate=null;save();renderDaily();}
 const RELIEFS=[{k:"antihist",e:"\uD83D\uDC8A",label:"Extra antihistamine"},{k:"h2",e:"\uD83D\uDC8A",label:"H2 blocker"},{k:"rescue",e:"\uD83E\uDE79",label:"Rescue meds"},{k:"rest",e:"\uD83D\uDECF\uFE0F",label:"Rest / lie down"},{k:"cool",e:"\u2744\uFE0F",label:"Cooling / ice"},{k:"fluids",e:"\uD83D\uDCA7",label:"Fluids / electrolytes"},{k:"avoid",e:"\uD83D\uDEAB",label:"Removed the trigger"},{k:"epi",e:"\uD83D\uDD34",label:"Adrenaline / ER"}];
 const TRIGGERS=[
  {k:'heat',e:'🔥',label:'Heat / hot shower'},
@@ -2144,7 +2156,7 @@ function foodCard(){
       <div class="glabel">Your own foods</div>
       <div class="csub" style="margin:4px 0 0">Add anything not listed (a brand, a recipe, "oat milk"). It joins the correlator and your check-in tags.</div>
       <div class="custom-add"><input id="cf-in" type="text" placeholder="e.g. oat milk" onkeydown="if(event.key==='Enter')addCustomFood()"><button class="btn btn-primary btn-sm" onclick="addCustomFood()">Add</button></div>
-      <div>${(state.customfoods||[]).map(cf=>`<span class="cfchip">${cf} <b onclick="removeCustomFood('${cf.replace(/'/g,"\\'")}')">×</b></span>`).join('')}</div>
+      <div>${(state.customfoods||[]).map(cf=>{const mk=marks[cf]||'';const face=mk==='safe'?'🙂':mk==='react'?'😖':'✋';const style=mk==='safe'?'border-color:#8FCBA0;background:#E1EFE2':mk==='react'?'border-color:#E29B87;background:#F6E0D8':'';return `<span class="cfchip" style="${style};cursor:pointer" title="Tap to mark safe or trigger for you" onclick="cycleMark('${cf.replace(/'/g,"\\'")}');renderDiet()">${face} ${cf} <b onclick="event.stopPropagation();removeCustomFood('${cf.replace(/'/g,"\\'")}')">×</b></span>`;}).join('')}</div>
     </div>
     <div class="disc">Simplified general guidance, not medical or dietary advice. Goitrogens (raw cruciferous veg, soy) are fine cooked in normal amounts for most people; AIP flags show strict Autoimmune Protocol foods.</div>
   </div>`;
