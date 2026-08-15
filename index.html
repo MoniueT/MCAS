@@ -197,6 +197,39 @@
 </style>
 </head>
 <body>
+<noscript><div style="background:#B4487A;color:#fff;padding:12px 16px;font:14px/1.5 -apple-system,sans-serif;text-align:center">MastMate needs JavaScript to run. Please enable JavaScript for this site in your browser settings, then reload.</div></noscript>
+<script>
+/* Early safety net: if anything in the main script fails to parse or run,
+   show the error on screen instead of a silent white page. This block is
+   deliberately separate from the main script so it survives even a
+   syntax-level failure further down. */
+(function(){
+  function show(msg){
+    try{
+      var d=document.getElementById('jserrbar');
+      if(!d){
+        d=document.createElement('div'); d.id='jserrbar';
+        d.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:#B4487A;color:#fff;font:13px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;padding:10px 44px 10px 14px;text-align:left;white-space:pre-wrap;word-break:break-word;box-shadow:0 2px 10px rgba(0,0,0,.25)';
+        var x=document.createElement('button');
+        x.textContent='\u00d7';
+        x.style.cssText='position:absolute;top:6px;right:8px;background:none;border:none;color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:4px';
+        x.onclick=function(){d.parentNode&&d.parentNode.removeChild(d);};
+        d.appendChild(x);
+        var t=document.createElement('div'); t.id='jserrtxt'; d.appendChild(t);
+        (document.body||document.documentElement).appendChild(d);
+      }
+      var t2=document.getElementById('jserrtxt');
+      if(t2) t2.textContent='MastMate hit a snag on this device: '+msg+'\nYour data is safe. Please screenshot this bar and send it to me so I can fix it quickly.';
+    }catch(e){}
+  }
+  window.addEventListener('error',function(ev){
+    show((ev.message||'unknown error')+(ev.lineno?(' [line '+ev.lineno+']'):''));
+  });
+  window.addEventListener('unhandledrejection',function(ev){
+    var r=ev&&ev.reason; show(String(r&&(r.message||r)||'unknown async error'));
+  });
+})();
+</script>
 <div id="filewarn"></div>
 <header>
   <div class="head-in">
@@ -384,6 +417,26 @@ function load(){try{
   if(s.reintro&&(typeof s.reintro!=='object'||!s.reintro.food||!s.reintro.started)) s.reintro=null;
   s.reintros=s.reintros.filter(x=>x&&typeof x==='object'&&x.food);
   if(!Array.isArray(s.periods)) s.periods=[]; s.periods=s.periods.filter(x=>typeof x==='string');
+  /* v-fix: records saved by older versions (full timestamps, missing dates, null
+     entries) could crash the Home screen into a blank page. Normalise every
+     stored date to YYYY-MM-DD, salvage what can be salvaged, and drop the rest,
+     so one legacy record can never take the app down again. */
+  const okDate=x=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x)&&!isNaN(new Date(x+'T00:00').getTime());
+  const normDate=x=>{if(typeof x!=='string')return null;const t=x.slice(0,10);return okDate(t)?t:null;};
+  const cleanRows=arr=>arr.filter(r=>r&&typeof r==='object').map(r=>{r.date=normDate(r.date);return r;}).filter(r=>r.date);
+  s.checkins=cleanRows(s.checkins);
+  s.labs=cleanRows(s.labs);
+  s.doses=cleanRows(s.doses);
+  s.dosechanges=cleanRows(s.dosechanges);
+  s.experiments=s.experiments.filter(x=>x&&typeof x==='object');
+  s.customfoods=s.customfoods.filter(x=>typeof x==='string');
+  s.reintros=s.reintros.map(t=>{t.started=normDate(t.started);t.ended=normDate(t.ended);return t;}).filter(t=>t.started);
+  if(s.reintro){s.reintro.started=normDate(s.reintro.started);if(!s.reintro.started)s.reintro=null;}
+  if(s.experiment){const e=s.experiment;const st2=(e&&typeof e==='object')?normDate(e.started):null;
+    if(!st2||!e.baseline||typeof e.baseline!=='object'||e.baseline.med==null||!(e.days>0)){s.experiment=null;}
+    else{e.started=st2;}}
+  s.labtest=normDate(s.labtest);
+  s.periods=s.periods.map(normDate).filter(Boolean);
   return s;
 }catch(e){return blank();}}
 function save(){try{localStorage.setItem(LS,JSON.stringify(state));}catch(e){}}
@@ -400,17 +453,31 @@ function go(s){cur=s;
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.s===s));
   window.scrollTo(0,0); render();
 }
-function render(){({home:renderHome,daily:renderDaily,meds:renderMeds,diet:renderDiet,summary:renderSummary,profile:renderProfile})[cur]();}
+function render(){
+  try{
+    ({home:renderHome,daily:renderDaily,meds:renderMeds,diet:renderDiet,summary:renderSummary,profile:renderProfile})[cur]();
+  }catch(e){
+    try{console.error(e);}catch(_){}
+    const el=document.getElementById('s-'+cur);
+    if(el)el.innerHTML='<div class="card"><h2>Something went wrong showing this screen</h2>'+
+      '<div class="csub">Your data is safe on this device. Please screenshot this message and send it to me so I can fix it.</div>'+
+      '<div style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#8F2F29;white-space:pre-wrap;word-break:break-word">'+
+      String(e&&(e.message||e)).replace(/</g,'&lt;')+'</div></div>';
+  }
+}
+/* Renders one optional card defensively: if a single card fails on a
+   particular device or data shape, the rest of the screen still shows. */
+function safeCard(fn){try{return fn()||'';}catch(e){try{console.error(fn&&fn.name,e);}catch(_){}return '';}}
 
 /* ---------------- helpers ---------------- */
 function last(arr){return arr.length?arr[arr.length-1]:null;}
 function burden(c){if(!c||!c.sev)return null;const v=Object.values(c.sev);return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length*25):0;}
-function doseStreak(){let s=0;const d=new Date();for(let i=0;i<60;i++){const ds=new Date(d);ds.setDate(d.getDate()-i);const key=ds.toISOString().slice(0,10);const rec=state.doses.find(x=>x.date===key);if(rec&&rec.taken){s++;}else if(i>0){break;}else{break;}}return s;}
+function doseStreak(){let s=0;const d=new Date();for(let i=0;i<60;i++){const ds=new Date(d);ds.setDate(d.getDate()-i);const key=ds.toISOString().slice(0,10);const rec=state.doses.find(x=>x&&x.date===key);if(rec&&rec.taken){s++;}else if(i>0){break;}else{break;}}return s;}
 function waterToday(){state.water=state.water||{};return state.water[today()]||0;}
 function addWater(n){state.water=state.water||{};const v=Math.max(0,waterToday()+n);state.water[today()]=v;save();renderHome();}
 function flareFreeDays(){
   const fl=state.checkins.filter(isFlare).map(c=>c.date).sort();
-  if(!fl.length){const first=state.checkins[0];return first?daysBetween(first.date,today()):null;}
+  if(!fl.length){const first=state.checkins[0];return (first&&first.date)?daysBetween(first.date,today()):null;}
   return daysBetween(fl[fl.length-1],today());
 }
 function heatStrip(){
@@ -433,7 +500,7 @@ function medSelect(onRender){
   return `<div class="field" style="width:110px"><label class="fl">Medicine</label><select onchange="state.profile.med=this.value;save();${onRender}()"><option value="" ${!state.profile.med?'selected':''}>·</option>${MED_OPTIONS.map(m=>`<option ${state.profile.med===m?'selected':''}>${m}</option>`).join('')}</select></div>${state.profile.med==='Other (please specify)'?`<div class="col field"><label class="fl">Medicine name</label><input type="text" value="${(state.profile.medOther||'').replace(/"/g,'&quot;')}" placeholder="e.g. Mirtazapine" oninput="state.profile.medOther=this.value;save()"/></div>`:''}`;
 }
 function medName(p){return (p.med==='Other (please specify)'&&p.medOther)?p.medOther:(p.med||'');}
-function takenToday(){return state.doses.find(x=>x.date===today()&&x.taken);}
+function takenToday(){return state.doses.find(x=>x&&x.date===today()&&x.taken);}
 
 /* ---------------- HOME ---------------- */
 /* ---------------- reminders & install ---------------- */
@@ -1093,12 +1160,12 @@ function renderHome(){
         ? `<div style="font-size:15px;color:rgba(255,246,250,.85);margin:10px auto 2px;max-width:280px">Log your first check-in and this becomes your reaction-free counter.</div>`
         : `<div class="ff-num" style="${ffd===0?'color:#FFD9CF;text-shadow:0 0 30px rgba(194,72,63,.55)':''}">${ffd===0?'🔥':ffd}</div>
            <div style="font-size:13.5px;color:rgba(255,246,250,.8);margin-top:4px">${ffd===0?'Be kind to yourself today: rest, rescue plan, and tag the last 48 hours of food.':(ffd===1?'day. Every clear day counts.':'days. Keep the habits that got you here.')}</div>`}
-      <div style="margin-top:18px">${heatStrip()}</div>
+      <div style="margin-top:18px">${safeCard(heatStrip)}</div>
     </div>
 
-    ${nudges()}
+    ${safeCard(nudges)}
 
-    ${bucketCard()}
+    ${safeCard(bucketCard)}
 
     <div class="secthead"><b>Today</b><span class="glabel">${new Date().toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'short'})}</span></div>
     <div class="card" style="padding:16px 18px">
@@ -1145,16 +1212,16 @@ function renderHome(){
       <div class="qi" onclick="${state.checkins.filter(x=>burden(x)!=null).length>=3?'shareProgress()':"go('daily')"}">${GL.share}<div>Share</div></div>
     </div>
 
-    ${experimentCard()}
-    ${reintroHomeCard()}
+    ${safeCard(experimentCard)}
+    ${safeCard(reintroHomeCard)}
 
-    ${(()=>{const inner=[tipsCard(),progressCard(),monthCard(),rangeSymptomCard(),overlayCard(),foodLagCard(),insightsCard(),correlationCard()].join('');
+    ${(()=>{const inner=[tipsCard,progressCard,monthCard,rangeSymptomCard,overlayCard,foodLagCard,insightsCard,correlationCard].map(safeCard).join('');
       if(!inner.trim())return '';
       return `<div class="card" style="cursor:pointer" onclick="homeInsightsOpen=!homeInsightsOpen;renderHome()">
         <div style="display:flex;align-items:center;gap:10px"><div style="flex:1"><h2 style="margin:0">Your insights</h2><div class="csub" style="margin:0">Trends, tips and patterns from your data</div></div><span style="color:var(--soft);font-size:13px;display:inline-block;transition:transform .15s;${homeInsightsOpen?'transform:rotate(90deg)':''}">▸</span></div>
       </div>${homeInsightsOpen?inner:''}`;
     })()}
-    ${installCard()}
+    ${safeCard(installCard)}
 
     <p class="disc">MastMate is an educational and organisational tool. It is not medical advice, not a diagnosis, and not a substitute for your doctor. Always follow your clinician's guidance, especially about medication and dosage.</p>
   `;  animateFF(typeof ffd==='number'?ffd:0);
@@ -2342,8 +2409,10 @@ function exportCSV(){
 }
 
 /* init */
-if(!state.onboarded && !state.profile.stage && !(state.checkins&&state.checkins.length)) onboard();
-renderHome();
+try{
+  if(!state.onboarded && !state.profile.stage && !(state.checkins&&state.checkins.length)) onboard();
+}catch(e){try{console.error(e);}catch(_){}}
+render();
 maybeNotify();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)maybeNotify();});
 </script>
